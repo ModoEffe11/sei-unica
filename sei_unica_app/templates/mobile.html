@@ -954,156 +954,6 @@ function bindSheetEvents(){
   if(ms){ ms.removeEventListener("input",()=>{}); ms.addEventListener("input",e=>{ mobileSearch=e.target.value; renderClientiList(); }); }
 }
 
-// ===== PERSISTENZA LOCALE (localStorage) =====
-const STORAGE_KEY = 'sei_unica_state';
-
-function saveState() {
-  try {
-    const toSave = {
-      clienti: state.clienti,
-      appuntamenti: state.appuntamenti,
-      magazzino: state.magazzino,
-      _savedAt: new Date().toISOString()
-    };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
-    // Flash salvataggio
-    const si = document.getElementById('saveInd');
-    if (si) { si.classList.add('show'); setTimeout(() => si.classList.remove('show'), 1200); }
-  } catch(e) { console.warn('Salvataggio locale fallito:', e); }
-}
-
-function loadState() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return false;
-    const saved = JSON.parse(raw);
-    if (saved.clienti && saved.clienti.length > 0) {
-      state.clienti = saved.clienti;
-      state.appuntamenti = saved.appuntamenti || [];
-      state.magazzino = saved.magazzino || [];
-      console.log('✅ Dati caricati dal salvataggio locale (' + saved._savedAt + ')');
-      return true;
-    }
-  } catch(e) { console.warn('Caricamento locale fallito:', e); }
-  return false;
-}
-
-// Prova a caricare lo stato salvato
-loadState();
-
-// Auto-salva ogni 10 secondi se ci sono state modifiche
-let _lastSaveHash = '';
-setInterval(() => {
-  const hash = JSON.stringify({c: state.clienti.length, a: state.appuntamenti.length, m: state.magazzino.length});
-  if (hash !== _lastSaveHash) { _lastSaveHash = hash; saveState(); }
-}, 10000);
-
-
-// ===== SYNC CON BACKEND (opzionale) =====
-const API_BASE = window.location.origin;
-let _authToken = null;
-let _backendOnline = false;
-
-async function checkBackend() {
-  try {
-    const r = await fetch(API_BASE + '/api/health', {signal: AbortSignal.timeout(3000)});
-    if (r.ok) {
-      const d = await r.json();
-      _backendOnline = d.ok;
-      const dot = document.getElementById('connDot');
-      const lbl = document.getElementById('connLabel');
-      if (dot && lbl) {
-        dot.className = 'conn-dot ' + (_backendOnline ? 'online' : 'offline');
-        lbl.innerHTML = '<span class="conn-dot ' + (_backendOnline ? 'online' : 'offline') + '" id="connDot"></span>' +
-          (_backendOnline ? (d.protetto ? '🔒 Server' : '✅ Server') : 'Offline');
-      }
-      return d;
-    }
-  } catch(e) { _backendOnline = false; }
-  const dot = document.getElementById('connDot');
-  if (dot) dot.className = 'conn-dot offline';
-  return null;
-}
-
-async function syncFromBackend() {
-  if (!_backendOnline) return;
-  try {
-    const headers = _authToken ? {'X-Auth-Token': _authToken} : {};
-    const [cr, sr, ar, mr] = await Promise.all([
-      fetch(API_BASE + '/api/clienti', {headers}),
-      fetch(API_BASE + '/api/servizi', {headers}),
-      fetch(API_BASE + '/api/appuntamenti', {headers}),
-      fetch(API_BASE + '/api/magazzino', {headers}),
-    ]);
-    if (cr.ok && ar.ok && mr.ok) {
-      const clienti = await cr.json();
-      const appuntamenti = await ar.json();
-      const magazzino = await mr.json();
-      if (clienti.length > 0 || appuntamenti.length > 0) {
-        // Mappa dal formato backend al formato frontend
-        state.clienti = clienti.map(c => ({
-          id: c.id, nome: c.nome, cognome: c.cognome, soprannome: c.soprannome || '',
-          telefono: c.telefono || '', email: c.email || '', note: c.note || '',
-          foto: c.foto, creato: c.creato, metodoPref: c.metodo_pref || ''
-        }));
-        state.appuntamenti = appuntamenti.map(a => ({
-          id: a.id, clienteId: a.cliente_id, data: a.data, ora: a.ora,
-          servizi: (a.servizi || []).map(s => s.id), note: a.note || '',
-          completato: !!a.completato, metodo: a.metodo_pagamento
-        }));
-        state.magazzino = magazzino.map(m => ({
-          id: m.id, emoji: m.emoji || '📦', nome: m.nome,
-          qty: m.qty, costo: m.costo, fornitore: m.fornitore || '', note: m.note || ''
-        }));
-        saveState();
-        toast('📡 Sincronizzato con il server');
-        renderDateStrip(); renderApptList();
-      }
-    }
-  } catch(e) { console.warn('Sync fallito:', e); }
-}
-
-// Check backend e sync all'avvio
-checkBackend().then(d => {
-  if (d && d.ok && d.db) syncFromBackend();
-});
-
-
-// ===== PWA: Service Worker & Install =====
-let _deferredPrompt = null;
-
-window.addEventListener('beforeinstallprompt', (e) => {
-  e.preventDefault();
-  _deferredPrompt = e;
-  const banner = document.getElementById('installBanner');
-  if (banner) banner.style.display = 'flex';
-});
-
-function installApp() {
-  if (_deferredPrompt) {
-    _deferredPrompt.prompt();
-    _deferredPrompt.userChoice.then(r => {
-      if (r.outcome === 'accepted') toast('✅ App installata!');
-      _deferredPrompt = null;
-      document.getElementById('installBanner').style.display = 'none';
-    });
-  }
-}
-
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js').catch(() => {});
-}
-
-// Online/offline detection
-window.addEventListener('online', () => { checkBackend(); toast('🌐 Connessione ripristinata'); });
-window.addEventListener('offline', () => {
-  _backendOnline = false;
-  const dot = document.getElementById('connDot');
-  if (dot) dot.className = 'conn-dot offline';
-  toast('📴 Modalità offline');
-});
-
-
 // ===== INIT =====
 renderDateStrip();
 renderApptList();
@@ -1140,19 +990,10 @@ function showSaveIndicator(){
   el._t = setTimeout(()=> el.classList.remove("show"), 1200);
 }
 
-// Auto-save dopo ogni modifica (debounce)
-let _saveTimer = null;
-const _origPush = Array.prototype.push;
+// Auto-save on data changes
 function autoSaveWrap(){
-  clearTimeout(_saveTimer);
-  _saveTimer = setTimeout(saveState, 500);
-}
-
-// Patch state-modifying functions
-const _origToast = toast;
-function toast(msg){
-  _origToast(msg);
-  autoSaveWrap();
+  clearTimeout(autoSaveWrap._t);
+  autoSaveWrap._t = setTimeout(saveState, 500);
 }
 
 // Load saved data on startup
@@ -1183,7 +1024,10 @@ function updateConnectionUI(){
 
 async function checkBackend(){
   try {
-    const r = await fetch("/api/health", {signal: AbortSignal.timeout(3000)});
+    const ctrl = new AbortController();
+    const tmr = setTimeout(() => ctrl.abort(), 3000);
+    const r = await fetch("/api/health", {signal: ctrl.signal});
+    clearTimeout(tmr);
     if(r.ok){
       const d = await r.json();
       if(d.ok){ apiBase = "/api"; updateConnectionUI(); return true; }
