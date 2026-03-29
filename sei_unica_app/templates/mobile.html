@@ -495,23 +495,40 @@ window.selectPayMethod=function(m){
   state.selectedPayMethod=m;
   document.querySelectorAll(".payment-btn").forEach(b=>b.classList.toggle("selected",b.querySelector(".pl")?.textContent===payInfo(m).label));
 };
-window.confirmPay=function(){
+window.confirmPay=async function(){
   const appt=state.appuntamenti.find(a=>a.id===state.selectedPayAppt);
-  if(appt){ appt.completato=true; appt.metodo=state.selectedPayMethod; saveState(); }
-  closeSheet(); renderDateStrip(); renderApptList();
+  closeSheet();
+  if(apiBase && appt){
+    await apiPost("/appuntamenti/"+appt.id+"/toggle",{metodo_pagamento:state.selectedPayMethod});
+    await syncFromServer();
+  } else if(appt){
+    appt.completato=true; appt.metodo=state.selectedPayMethod; saveState();
+  }
+  renderDateStrip(); renderApptList();
   toast("✅ Incassato con "+payInfo(state.selectedPayMethod).label+"!");
 };
-window.untoggleAppt=function(id){
+window.untoggleAppt=async function(id){
   if(confirm("Annullare l'incasso?")){
-    const a=state.appuntamenti.find(x=>x.id===id);
-    if(a){ a.completato=false; a.metodo=null; saveState(); }
+    if(apiBase){
+      await apiPost("/appuntamenti/"+id+"/toggle",{});
+      await syncFromServer();
+    } else {
+      const a=state.appuntamenti.find(x=>x.id===id);
+      if(a){ a.completato=false; a.metodo=null; saveState(); }
+    }
     renderDateStrip(); renderApptList(); toast("↩️ Incasso annullato");
   }
 };
-window.deleteAppt=function(id){
+window.deleteAppt=async function(id){
   if(confirm("Eliminare l'appuntamento?")){
-    state.appuntamenti=state.appuntamenti.filter(a=>a.id!==id);
-    saveState(); renderDateStrip(); renderApptList();
+    if(apiBase){
+      await apiDelete("/appuntamenti/"+id);
+      await syncFromServer();
+    } else {
+      state.appuntamenti=state.appuntamenti.filter(a=>a.id!==id);
+      saveState();
+    }
+    renderDateStrip(); renderApptList();
   }
 };
 
@@ -550,16 +567,22 @@ window.toggleApptSvc=function(id,el){
   document.getElementById("sumT").textContent="⏱ "+mins+" min";
   document.getElementById("sumP").textContent="€"+price;
 };
-window.saveNewAppt=function(){
+window.saveNewAppt=async function(){
   const cid=document.getElementById("apptCli").value;
   const data=document.getElementById("apptData").value;
   const ora=document.getElementById("apptOra").value;
   const note=document.getElementById("apptNote").value;
   if(!cid||state.selectedApptServices.length===0){ toast("Seleziona cliente e servizi"); return; }
-  state.appuntamenti.push({id:uid(),clienteId:Number(cid),data,ora,servizi:[...state.selectedApptServices],note,completato:false,metodo:null});
-  saveState();
+  closeSheet();
+  if(apiBase){
+    await apiPost("/appuntamenti",{cliente_id:Number(cid),data,ora,note,servizi:state.selectedApptServices});
+    await syncFromServer();
+  } else {
+    state.appuntamenti.push({id:uid(),clienteId:Number(cid),data,ora,servizi:[...state.selectedApptServices],note,completato:false,metodo:null});
+    saveState();
+  }
   state.selectedDate=data;
-  closeSheet(); renderDateStrip(); renderApptList();
+  renderDateStrip(); renderApptList();
   toast("✅ Appuntamento prenotato!");
 };
 
@@ -615,22 +638,25 @@ function _openClientSheet(d){
     });
   });
 }
-window.saveClient=function(){
+window.saveClient=async function(){
   const nome=document.getElementById("cNome").value.trim();
   const cognome=document.getElementById("cCognome")?.value.trim()||"";
   if(!nome){ toast("Inserisci il nome"); return; }
   const metodoPref=[...document.querySelectorAll("input[name='cMetodoPref']")].find(r=>r.checked)?.value||"";
-  const data={nome,cognome,soprannome:document.getElementById("cSopr").value,telefono:document.getElementById("cTel").value,note:document.getElementById("cNote").value,metodoPref,email:"",foto:null};
-  if(_editClientId){
-    const cl=getClient(_editClientId);
-    if(cl){ Object.assign(cl,data); saveState(); }
-    toast("✅ Cliente aggiornato!");
+  const d={nome,cognome,soprannome:document.getElementById("cSopr").value,telefono:document.getElementById("cTel").value,note:document.getElementById("cNote").value,metodo_pref:metodoPref,email:""};
+  closeSheet();
+  if(apiBase){
+    if(_editClientId) await apiPut("/clienti/"+_editClientId, d);
+    else await apiPost("/clienti", d);
+    await syncFromServer();
   } else {
-    state.clienti.push({...data,id:uid(),creato:fmtDate(today)});
+    d.metodoPref=metodoPref;
+    if(_editClientId){ const cl=getClient(_editClientId); if(cl) Object.assign(cl,d); }
+    else state.clienti.push({...d,id:uid(),creato:fmtDate(today)});
     saveState();
-    toast("✅ Cliente creato!");
   }
-  closeSheet(); renderClientiList();
+  toast(_editClientId?"✅ Cliente aggiornato!":"✅ Cliente creato!");
+  renderClientiList();
 };
 
 // ===== CLIENTI LIST =====
@@ -793,20 +819,32 @@ function renderMagazzino(){
   `;
 }
 
-window.magQty = function(id, delta){
+window.magQty = async function(id, delta){
   const p = state.magazzino.find(x=>x.id===id);
   if(!p) return;
-  p.qty = Math.max(0, p.qty + delta);
-  saveState();
+  if(apiBase){
+    await apiPost("/magazzino/"+id+"/qty", {delta});
+    await syncFromServer();
+  } else {
+    p.qty = Math.max(0, p.qty + delta);
+    saveState();
+  }
   renderMagazzino();
-  toast(`${p.emoji} ${p.nome}: ${p.qty} flaconi`);
+  const updated = state.magazzino.find(x=>x.id===id);
+  toast(`${updated?.emoji||p.emoji} ${updated?.nome||p.nome}: ${updated?.qty??p.qty} flaconi`);
 };
 
-window.deleteProd = function(id){
+window.deleteProd = async function(id){
   const p = state.magazzino.find(x=>x.id===id);
   if(p && confirm(`Eliminare "${p.nome}"?`)){
-    state.magazzino = state.magazzino.filter(x=>x.id!==id);
-    saveState(); renderMagazzino(); toast("🗑️ Prodotto eliminato");
+    if(apiBase){
+      await apiDelete("/magazzino/"+id);
+      await syncFromServer();
+    } else {
+      state.magazzino = state.magazzino.filter(x=>x.id!==id);
+      saveState();
+    }
+    renderMagazzino(); toast("🗑️ Prodotto eliminato");
   }
 };
 
@@ -854,7 +892,7 @@ window.pickEmoji = function(e, btn){
   btn.style.borderColor="var(--accent)"; btn.style.background="var(--accent-light)";
 };
 
-window.saveProd = function(){
+window.saveProd = async function(){
   const nome = document.getElementById("pNome").value.trim();
   if(!nome){ toast("Inserisci il nome del prodotto"); return; }
   const data = {
@@ -865,14 +903,21 @@ window.saveProd = function(){
     fornitore: document.getElementById("pForn").value,
     note: document.getElementById("pNote").value,
   };
-  if(_editProdId){
-    const p = state.magazzino.find(x=>x.id===_editProdId);
-    if(p){ Object.assign(p, data); saveState(); }
-    toast("✅ Prodotto aggiornato!");
+  closeSheet();
+  if(apiBase){
+    if(_editProdId) await apiPut("/magazzino/"+_editProdId, data);
+    else await apiPost("/magazzino", data);
+    await syncFromServer();
   } else {
-    state.magazzino.push({...data, id:uid()});
+    if(_editProdId){
+      const p = state.magazzino.find(x=>x.id===_editProdId);
+      if(p) Object.assign(p, data);
+    } else {
+      state.magazzino.push({...data, id:uid()});
+    }
     saveState();
-    toast("✅ Prodotto aggiunto!");
+  }
+  toast(_editProdId?"✅ Prodotto aggiornato!":"✅ Prodotto aggiunto!");
   }
   closeSheet(); renderMagazzino();
 };
@@ -1006,6 +1051,33 @@ if(loadState()){
 let isOnline = navigator.onLine;
 let apiBase = "";  // Will be set if backend detected
 
+// API helpers
+async function apiPost(path, data){
+  if(!apiBase) return null;
+  try {
+    const r = await fetch(apiBase+path, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(data)});
+    if(r.ok) return await r.json();
+    console.warn("API POST error:", r.status);
+  } catch(e){ console.warn("API POST failed:", e); }
+  return null;
+}
+async function apiPut(path, data){
+  if(!apiBase) return null;
+  try {
+    const r = await fetch(apiBase+path, {method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(data)});
+    if(r.ok) return await r.json();
+  } catch(e){ console.warn("API PUT failed:", e); }
+  return null;
+}
+async function apiDelete(path){
+  if(!apiBase) return null;
+  try {
+    const r = await fetch(apiBase+path, {method:"DELETE"});
+    if(r.ok) return true;
+  } catch(e){ console.warn("API DELETE failed:", e); }
+  return null;
+}
+
 function updateConnectionUI(){
   const dot = document.getElementById("connDot");
   const label = document.getElementById("connLabel");
@@ -1041,8 +1113,8 @@ async function checkBackend(){
 window.addEventListener("online", ()=>{ isOnline=true; checkBackend(); });
 window.addEventListener("offline", ()=>{ isOnline=false; apiBase=""; updateConnectionUI(); });
 
-// Check backend on load
-checkBackend();
+// Check backend on load, then sync
+checkBackend().then(ok => { if(ok) syncFromServer(); });
 
 // ===== API SYNC (optional, when backend is available) =====
 async function syncFromServer(){
@@ -1057,29 +1129,22 @@ async function syncFromServer(){
       const magazzino = await mRes.json();
 
       // Map server format to local format
-      if(clienti.length > 0){
-        state.clienti = clienti.map(c=>({
-          id:c.id, nome:c.nome, cognome:c.cognome, soprannome:c.soprannome||"",
-          telefono:c.telefono||"", email:c.email||"", note:c.note||"",
-          foto:c.foto||null, creato:c.creato||"", metodoPref:c.metodo_pref||""
-        }));
-      }
-      if(appuntamenti.length > 0){
-        state.appuntamenti = appuntamenti.map(a=>({
-          id:a.id, clienteId:a.cliente_id, data:a.data, ora:a.ora,
-          servizi: (a.servizi||[]).map(s=>s.id),
-          note:a.note||"", completato:!!a.completato, metodo:a.metodo_pagamento||null
-        }));
-      }
-      if(magazzino.length > 0){
-        state.magazzino = magazzino.map(m=>({
-          id:m.id, emoji:m.emoji||"📦", nome:m.nome, qty:m.qty||0,
-          costo:m.costo||0, fornitore:m.fornitore||"", note:m.note||""
-        }));
-      }
+      state.clienti = clienti.map(c=>({
+        id:c.id, nome:c.nome, cognome:c.cognome, soprannome:c.soprannome||"",
+        telefono:c.telefono||"", email:c.email||"", note:c.note||"",
+        foto:c.foto||null, creato:c.creato||"", metodoPref:c.metodo_pref||""
+      }));
+      state.appuntamenti = appuntamenti.map(a=>({
+        id:a.id, clienteId:a.cliente_id, data:a.data, ora:a.ora,
+        servizi: (a.servizi||[]).map(s=>s.id),
+        note:a.note||"", completato:!!a.completato, metodo:a.metodo_pagamento||null
+      }));
+      state.magazzino = magazzino.map(m=>({
+        id:m.id, emoji:m.emoji||"📦", nome:m.nome, qty:m.qty||0,
+        costo:m.costo||0, fornitore:m.fornitore||"", note:m.note||""
+      }));
       saveState();
       renderDateStrip(); renderApptList();
-      toast("✅ Dati sincronizzati dal server");
     }
   } catch(e){ console.warn("Sync fallita:", e); }
 }

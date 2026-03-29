@@ -332,6 +332,70 @@ let state = {
 };
 
 function getClient(id){ return state.clienti.find(c=>c.id===id); }
+// ===== API INTEGRATION =====
+let apiBase = "";
+
+async function apiPost(path, data){
+  if(!apiBase) return null;
+  try {
+    const r = await fetch(apiBase+path, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(data)});
+    if(r.ok) return await r.json();
+  } catch(e){ console.warn("API error:", e); }
+  return null;
+}
+async function apiPut(path, data){
+  if(!apiBase) return null;
+  try {
+    const r = await fetch(apiBase+path, {method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(data)});
+    if(r.ok) return await r.json();
+  } catch(e){}
+  return null;
+}
+async function apiDelete(path){
+  if(!apiBase) return null;
+  try {
+    const r = await fetch(apiBase+path, {method:"DELETE"});
+    if(r.ok) return true;
+  } catch(e){}
+  return null;
+}
+
+async function syncFromServer(){
+  if(!apiBase) return;
+  try {
+    const [cRes, aRes, mRes] = await Promise.all([
+      fetch(apiBase+"/clienti"), fetch(apiBase+"/appuntamenti"), fetch(apiBase+"/magazzino")
+    ]);
+    if(cRes.ok && aRes.ok && mRes.ok){
+      state.clienti = (await cRes.json()).map(c=>({
+        id:c.id, nome:c.nome, cognome:c.cognome, soprannome:c.soprannome||"",
+        telefono:c.telefono||"", email:c.email||"", note:c.note||"",
+        foto:c.foto||null, creato:c.creato||"", metodoPref:c.metodo_pref||""
+      }));
+      state.appuntamenti = (await aRes.json()).map(a=>({
+        id:a.id, clienteId:a.cliente_id, data:a.data, ora:a.ora,
+        servizi:(a.servizi||[]).map(s=>s.id),
+        note:a.note||"", completato:!!a.completato, metodo:a.metodo_pagamento||null
+      }));
+      state.magazzino = (await mRes.json()).map(m=>({
+        id:m.id, emoji:m.emoji||"📦", nome:m.nome, qty:m.qty||0,
+        costo:m.costo||0, fornitore:m.fornitore||"", note:m.note||""
+      }));
+      render();
+    }
+  } catch(e){ console.warn("Sync failed:", e); }
+}
+
+async function initBackend(){
+  try {
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 3000);
+    const r = await fetch("/api/health", {signal: ctrl.signal});
+    if(r.ok){ const d = await r.json(); if(d.ok){ apiBase = "/api"; await syncFromServer(); } }
+  } catch(e){}
+}
+
+
 function avatarHTML(nome,cognome,id,size,foto){
   if(foto) return `<div class="avatar" style="width:${size}px;height:${size}px"><img src="${foto}" alt=""></div>`;
   const col = AVATAR_COLORS[(id||0) % AVATAR_COLORS.length];
@@ -1080,39 +1144,73 @@ function bindEvents(){
 
   // Conferma incasso
   const cpb=document.getElementById("confirmPayBtn");
-  if(cpb) cpb.addEventListener("click",()=>{
+  if(cpb) cpb.addEventListener("click",async()=>{
     const appt=state.appuntamenti.find(a=>a.id===state.modal.apptId);
-    if(appt){ appt.completato=true; appt.metodo=selectedPayment; }
     const pi=payInfo(selectedPayment);
-    state.modal=null; render();
+    state.modal=null;
+    if(apiBase && appt){
+      await apiPost("/appuntamenti/"+appt.id+"/toggle",{metodo_pagamento:selectedPayment});
+      await syncFromServer();
+    } else if(appt){
+      appt.completato=true; appt.metodo=selectedPayment; render();
+    }
     toast("✅ Incassato con "+pi.label+"! "+pi.icon);
   });
 
   // Annulla incasso
-  document.querySelectorAll("[data-untoggle]").forEach(el=>el.addEventListener("click",()=>{
+  document.querySelectorAll("[data-untoggle]").forEach(el=>el.addEventListener("click",async()=>{
     if(confirm("Annullare l'incasso di questo appuntamento?")){
-      const appt=state.appuntamenti.find(a=>a.id===Number(el.dataset.untoggle));
-      if(appt){ appt.completato=false; appt.metodo=null; }
-      render(); toast("↩️ Incasso annullato");
+      const aid=Number(el.dataset.untoggle);
+      if(apiBase){
+        await apiPost("/appuntamenti/"+aid+"/toggle",{});
+        await syncFromServer();
+      } else {
+        const appt=state.appuntamenti.find(a=>a.id===aid);
+        if(appt){ appt.completato=false; appt.metodo=null; }
+        render();
+      }
+      toast("↩️ Incasso annullato");
     }
   }));
 
   // Elimina appuntamento
-  document.querySelectorAll("[data-delete-appt]").forEach(el=>el.addEventListener("click",()=>{
+  document.querySelectorAll("[data-delete-appt]").forEach(el=>el.addEventListener("click",async()=>{
     if(confirm("Eliminare questo appuntamento?")){
-      state.appuntamenti=state.appuntamenti.filter(a=>a.id!==Number(el.dataset.deleteAppt));
-      render();
+      const aid=Number(el.dataset.deleteAppt);
+      if(apiBase){
+        await apiDelete("/appuntamenti/"+aid);
+        await syncFromServer();
+      } else {
+        state.appuntamenti=state.appuntamenti.filter(a=>a.id!==aid);
+        render();
+      }
     }
   }));
 
   // Magazzino — +/- quantità
-  document.querySelectorAll("[data-qty-inc]").forEach(el=>el.addEventListener("click",()=>{
-    const p=state.magazzino.find(x=>x.id===Number(el.dataset.qtyInc));
-    if(p){ p.qty++; render(); toast(`${p.emoji} ${p.nome}: ${p.qty} flaconi`); }
+  document.querySelectorAll("[data-qty-inc]").forEach(el=>el.addEventListener("click",async()=>{
+    const pid=Number(el.dataset.qtyInc);
+    if(apiBase){
+      await apiPost("/magazzino/"+pid+"/qty",{delta:1});
+      await syncFromServer();
+    } else {
+      const p=state.magazzino.find(x=>x.id===pid);
+      if(p){ p.qty++; render(); }
+    }
+    const p=state.magazzino.find(x=>x.id===pid);
+    if(p) toast(`${p.emoji} ${p.nome}: ${p.qty} flaconi`);
   }));
-  document.querySelectorAll("[data-qty-dec]").forEach(el=>el.addEventListener("click",()=>{
-    const p=state.magazzino.find(x=>x.id===Number(el.dataset.qtyDec));
-    if(p&&p.qty>0){ p.qty--; render(); toast(`${p.emoji} ${p.nome}: ${p.qty} flaconi`); }
+  document.querySelectorAll("[data-qty-dec]").forEach(el=>el.addEventListener("click",async()=>{
+    const pid=Number(el.dataset.qtyDec);
+    if(apiBase){
+      await apiPost("/magazzino/"+pid+"/qty",{delta:-1});
+      await syncFromServer();
+    } else {
+      const p=state.magazzino.find(x=>x.id===pid);
+      if(p&&p.qty>0){ p.qty--; render(); }
+    }
+    const p=state.magazzino.find(x=>x.id===pid);
+    if(p) toast(`${p.emoji} ${p.nome}: ${p.qty} flaconi`);
   }));
 
   // Magazzino — modifica prodotto
@@ -1122,9 +1220,13 @@ function bindEvents(){
   }));
 
   // Magazzino — elimina prodotto
-  document.querySelectorAll("[data-del-prod]").forEach(el=>el.addEventListener("click",()=>{
+  document.querySelectorAll("[data-del-prod]").forEach(el=>el.addEventListener("click",async()=>{
     const p=state.magazzino.find(x=>x.id===Number(el.dataset.delProd));
-    if(p&&confirm(`Eliminare "${p.nome}" dal magazzino?`)){ state.magazzino=state.magazzino.filter(x=>x.id!==p.id); render(); toast("🗑️ Prodotto eliminato"); }
+    if(p&&confirm(`Eliminare "${p.nome}" dal magazzino?`)){
+      if(apiBase){ await apiDelete("/magazzino/"+p.id); await syncFromServer(); }
+      else { state.magazzino=state.magazzino.filter(x=>x.id!==p.id); render(); }
+      toast("🗑️ Prodotto eliminato");
+    }
   }));
 
   // Magazzino — form prodotto
@@ -1136,7 +1238,7 @@ function bindEvents(){
       document.querySelectorAll("[data-emoji-pick]").forEach(b=>b.style.borderColor="");
       btn.style.borderColor="var(--accent)"; btn.style.background="var(--accent-light)";
     }));
-    pf.addEventListener("submit",e=>{
+    pf.addEventListener("submit",async e=>{
       e.preventDefault();
       const fd=new FormData(pf);
       const data={
@@ -1147,13 +1249,20 @@ function bindEvents(){
         fornitore: fd.get("fornitore"),
         note: fd.get("note"),
       };
-      if(state.modal.type==="editProdotto"){
-        const p=state.magazzino.find(x=>x.id===state.modal.data.id);
-        Object.assign(p,data); toast("✅ Prodotto aggiornato!");
+      if(apiBase){
+        if(state.modal.type==="editProdotto") await apiPut("/magazzino/"+state.modal.data.id, data);
+        else await apiPost("/magazzino", data);
+        state.modal=null; await syncFromServer();
       } else {
-        state.magazzino.push({...data, id:uid()}); toast("✅ Prodotto aggiunto!");
+        if(state.modal.type==="editProdotto"){
+          const p=state.magazzino.find(x=>x.id===state.modal.data.id);
+          Object.assign(p,data);
+        } else {
+          state.magazzino.push({...data, id:uid()});
+        }
+        state.modal=null; render();
       }
-      state.modal=null; render();
+      toast(state.modal?"✅ Prodotto aggiornato!":"✅ Prodotto aggiunto!");
     });
   }
 
@@ -1172,22 +1281,28 @@ function bindEvents(){
         });
       });
     });
-    cf.addEventListener("submit",e=>{
+    cf.addEventListener("submit",async e=>{
       e.preventDefault();
       const fd=new FormData(cf);
-      const data={nome:fd.get("nome"),cognome:fd.get("cognome"),soprannome:fd.get("soprannome"),telefono:fd.get("telefono"),email:fd.get("email"),note:fd.get("note"),foto:currentFoto,metodoPref:fd.get("metodoPref")||""};
-      if(state.modal.type==="editClient"){
-        const cl=getClient(state.selectedClientId);
-        Object.assign(cl,data);
-        toast("✅ Cliente aggiornato!");
+      const data={nome:fd.get("nome"),cognome:fd.get("cognome"),soprannome:fd.get("soprannome"),telefono:fd.get("telefono"),email:fd.get("email"),note:fd.get("note"),metodo_pref:fd.get("metodoPref")||""};
+      if(apiBase){
+        if(state.modal.type==="editClient") await apiPut("/clienti/"+state.selectedClientId, data);
+        else await apiPost("/clienti", data);
+        state.modal=null; await syncFromServer();
+        if(state.modal!=="editClient") state.view="calendario";
       } else {
-        const nc={...data,id:uid(),creato:fmtDate(today)};
-        state.clienti.push(nc);
-        state.selectedClientId=nc.id;
-        state.view="cliente";
-        toast("✅ Cliente creato!");
+        data.foto=currentFoto; data.metodoPref=data.metodo_pref;
+        if(state.modal.type==="editClient"){
+          const cl=getClient(state.selectedClientId);
+          Object.assign(cl,data);
+        } else {
+          const nc={...data,id:uid(),creato:fmtDate(today)};
+          state.clienti.push(nc);
+          state.selectedClientId=nc.id; state.view="cliente";
+        }
+        state.modal=null; render();
       }
-      state.modal=null; render();
+      toast(state.view==="cliente"?"✅ Cliente aggiornato!":"✅ Cliente creato!");
     });
     const fi=document.getElementById("fotoInput");
     if(fi) fi.addEventListener("change",e=>{ const f=e.target.files[0]; if(f){ const r=new FileReader(); r.onload=ev=>{ currentFoto=ev.target.result; render(); }; r.readAsDataURL(f); } });
@@ -1205,13 +1320,19 @@ function bindEvents(){
       el.classList.toggle("active",selectedServices.includes(id));
       updateSummary();
     }));
-    af.addEventListener("submit",e=>{
+    af.addEventListener("submit",async e=>{
       e.preventDefault();
       const fd=new FormData(af);
       if(!fd.get("clienteId")||selectedServices.length===0){ toast("Seleziona cliente e almeno un servizio"); return; }
-      state.appuntamenti.push({id:uid(),clienteId:Number(fd.get("clienteId")),data:fd.get("data"),ora:fd.get("ora"),servizi:[...selectedServices],note:fd.get("note"),completato:false,metodo:null});
       state.selectedDate=fd.get("data");
-      state.view="calendario"; state.modal=null; render();
+      if(apiBase){
+        await apiPost("/appuntamenti",{cliente_id:Number(fd.get("clienteId")),data:fd.get("data"),ora:fd.get("ora"),note:fd.get("note"),servizi:[...selectedServices]});
+        state.view="calendario"; state.modal=null;
+        await syncFromServer();
+      } else {
+        state.appuntamenti.push({id:uid(),clienteId:Number(fd.get("clienteId")),data:fd.get("data"),ora:fd.get("ora"),servizi:[...selectedServices],note:fd.get("note"),completato:false,metodo:null});
+        state.view="calendario"; state.modal=null; render();
+      }
       toast("✅ Appuntamento prenotato!");
     });
   }
@@ -1227,6 +1348,9 @@ function updateSummary(){
 
 // Initial render
 render();
+
+// Connect to backend API and sync data
+initBackend();
 </script>
 </body>
 </html>
