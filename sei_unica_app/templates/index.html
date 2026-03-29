@@ -293,24 +293,8 @@ let currentFoto = null;
 let selectedPayment = "contanti";
 
 let state = {
-  clienti: [
-    {id:1,nome:"Susy",cognome:"Capezzolo",soprannome:"Susy",telefono:"333 1234567",email:"susy@email.it",note:"Allergia a tinture con ammoniaca. Preferisce prodotti bio.",foto:null,creato:"2025-01-15",metodoPref:"contanti"},
-    {id:2,nome:"Giulia",cognome:"Bianchi",soprannome:"",telefono:"347 9876543",email:"giulia.b@email.it",note:"Cuoio capelluto sensibile.",foto:null,creato:"2025-03-02",metodoPref:"bancomat"},
-    {id:3,nome:"Francesca",cognome:"Verdi",soprannome:"Francy",telefono:"320 5551234",email:"",note:"Viene sempre il sabato. Porta spesso la figlia.",foto:null,creato:"2024-11-20",metodoPref:"satispay"},
-    {id:4,nome:"Anna",cognome:"Ferrari",soprannome:"Annina",telefono:"339 7778899",email:"anna@gmail.com",note:"",foto:null,creato:"2025-06-10",metodoPref:""},
-  ],
-  appuntamenti: [
-    {id:1,clienteId:1,data:fmtDate(today),ora:"09:30",servizi:[1,3],note:"Accorciare 3cm",completato:false,metodo:null},
-    {id:2,clienteId:2,data:fmtDate(today),ora:"11:00",servizi:[4],note:"",completato:false,metodo:null},
-    {id:3,clienteId:3,data:fmtDate(addDays(today,1)),ora:"10:00",servizi:[6],note:"Balayage biondo miele",completato:false,metodo:null},
-    {id:4,clienteId:4,data:fmtDate(addDays(today,2)),ora:"15:30",servizi:[1,9],note:"",completato:false,metodo:null},
-    {id:5,clienteId:1,data:fmtDate(addDays(today,-14)),ora:"10:00",servizi:[5,3],note:"Colore castano dorato 6.3",completato:true,metodo:"carta"},
-    {id:6,clienteId:2,data:fmtDate(addDays(today,-30)),ora:"14:00",servizi:[1],note:"Caschetto lungo",completato:true,metodo:"contanti"},
-    {id:7,clienteId:3,data:fmtDate(addDays(today,-7)),ora:"09:00",servizi:[3],note:"Solo piega per evento",completato:true,metodo:"contanti"},
-    {id:8,clienteId:1,data:fmtDate(addDays(today,-60)),ora:"11:00",servizi:[7],note:"Prima cheratina",completato:true,metodo:"bonus"},
-    {id:9,clienteId:4,data:fmtDate(addDays(today,-45)),ora:"10:30",servizi:[1,3],note:"",completato:true,metodo:"carta"},
-    {id:10,clienteId:2,data:fmtDate(addDays(today,-90)),ora:"15:00",servizi:[6],note:"Meches piatte",completato:true,metodo:"contanti"},
-  ],
+  clienti: [],
+  appuntamenti: [],
   logo: null,
   salonName: "Sei Unica",
   view: "calendario",
@@ -320,15 +304,7 @@ let state = {
   modal: null,
   preselectedClientId: null,
   weekOffset: 0,
-  magazzino: [
-    {id:1, emoji:"🟤", nome:"Aquarely Castano",   qty:8,  costo:5.20, fornitore:"Itely", note:"Nuance 4N, 4CL, 4CH"},
-    {id:2, emoji:"⚫", nome:"Aquarely Nero",       qty:5,  costo:5.20, fornitore:"Itely", note:"Nuance 1N"},
-    {id:3, emoji:"🟡", nome:"Aquarely Biondo",    qty:6,  costo:5.20, fornitore:"Itely", note:"Nuance 8N, 9N, 10N"},
-    {id:4, emoji:"🔴", nome:"Aquarely Rosso",     qty:4,  costo:5.20, fornitore:"Itely", note:"Nuance 6RF, 7RF"},
-    {id:5, emoji:"💧", nome:"Acqua Ossigenata",  qty:12, costo:2.80, fornitore:"Fanola", note:"Vol. 10, 20, 30, 40"},
-    {id:6, emoji:"🧴", nome:"Shampoo Professionale", qty:3, costo:12.00, fornitore:"Kerastase", note:"Uso quotidiano"},
-    {id:7, emoji:"🫙", nome:"Maschera Ristrutturante", qty:2, costo:18.00, fornitore:"Schwarzkopf", note:"Trattamento intensivo"},
-  ],
+  magazzino: [],
 };
 
 function getClient(id){ return state.clienti.find(c=>c.id===id); }
@@ -669,6 +645,8 @@ function renderListino(){
 
 // ===== STATISTICHE =====
 function renderStatistiche(){
+  // Low stock alert
+  const lowItems=state.magazzino.filter(p=>p.qty<=2);
   // Calcola statistiche dai dati locali
   const oggi=fmtDate(today);
   const inizio_mese=fmtDate(new Date(today.getFullYear(),today.getMonth(),1));
@@ -1344,6 +1322,24 @@ function updateSummary(){
   s.style.display="flex";
   document.getElementById("sumTime").textContent="⏱ "+selectedServices.reduce((t,id)=>t+(getSvc(id)?.duration||0),0)+" minuti";
   document.getElementById("sumPrice").textContent="Totale: €"+selectedServices.reduce((t,id)=>t+(getSvc(id)?.price||0),0);
+}
+
+// ===== EXPORT =====
+function exportData(){
+  const data = {
+    esportato: new Date().toISOString(),
+    clienti: state.clienti,
+    appuntamenti: state.appuntamenti,
+    magazzino: state.magazzino
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], {type:"application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "sei_unica_backup_" + fmtDate(today) + ".json";
+  a.click();
+  URL.revokeObjectURL(url);
+  toast("📥 Backup scaricato!");
 }
 
 // Initial render

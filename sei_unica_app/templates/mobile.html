@@ -208,6 +208,10 @@
         <span class="ib-text">Installa l'app sul telefono per accedere rapidamente</span>
         <button class="ib-btn">Installa</button>
       </div>
+      <div style="position:relative;margin-bottom:10px">
+        <span style="position:absolute;left:14px;top:50%;transform:translateY(-50%);opacity:.4">🔍</span>
+        <input id="calSearch" type="search" placeholder="Cerca cliente..." oninput="renderApptList()" style="padding:10px 14px 10px 36px;border-radius:10px;border:1.5px solid var(--border);background:var(--card);width:100%;font-size:14px;outline:none">
+      </div>
       <div id="dateStripWrap"></div>
       <div id="apptList"></div>
     </div>
@@ -259,7 +263,7 @@
     <button class="bnav-item active" data-page="oggi" onclick="switchPage('oggi',this)"><span class="bi">📅</span><span class="bl">Oggi</span></button>
     <button class="bnav-item" data-page="clienti" onclick="switchPage('clienti',this)"><span class="bi">👥</span><span class="bl">Clienti</span></button>
     <button class="bnav-item" data-page="listino" onclick="switchPage('listino',this)"><span class="bi">💈</span><span class="bl">Listino</span></button>
-    <button class="bnav-item" data-page="magazzino" onclick="switchPage('magazzino',this)"><span class="bi">📦</span><span class="bl">Magazzino</span></button>
+    <button class="bnav-item" data-page="magazzino" onclick="switchPage('magazzino',this)"><span class="bi" style="position:relative">📦<span id="magBadge" style="display:none;position:absolute;top:-4px;right:-8px;background:var(--danger);color:#fff;font-size:9px;padding:1px 4px;border-radius:8px;font-weight:700"></span></span><span class="bl">Magazzino</span></button>
     <button class="bnav-item" data-page="stat" onclick="switchPage('stat',this)"><span class="bi">📊</span><span class="bl">Stat</span></button>
   </nav>
 </div>
@@ -327,31 +331,9 @@ function badge(t,c){ return `<span class="badge" style="background:${(c||"var(--
 
 // ===== STATE =====
 let state = {
-  clienti: [
-    {id:1,nome:"Susy",cognome:"Capezzolo",soprannome:"Susy",telefono:"333 1234567",email:"susy@email.it",note:"Allergia a tinture con ammoniaca.",foto:null,creato:"2025-01-15",metodoPref:"contanti"},
-    {id:2,nome:"Giulia",cognome:"Bianchi",soprannome:"",telefono:"347 9876543",email:"giulia.b@email.it",note:"Cuoio capelluto sensibile.",foto:null,creato:"2025-03-02",metodoPref:"bancomat"},
-    {id:3,nome:"Francesca",cognome:"Verdi",soprannome:"Francy",telefono:"320 5551234",email:"",note:"Viene sempre il sabato.",foto:null,creato:"2024-11-20",metodoPref:"satispay"},
-    {id:4,nome:"Anna",cognome:"Ferrari",soprannome:"Annina",telefono:"339 7778899",email:"anna@gmail.com",note:"",foto:null,creato:"2025-06-10",metodoPref:""},
-  ],
-  appuntamenti: [
-    {id:1,clienteId:1,data:fmtDate(today),ora:"09:30",servizi:[1,3],note:"Accorciare 3cm",completato:false,metodo:null},
-    {id:2,clienteId:2,data:fmtDate(today),ora:"11:00",servizi:[4],note:"",completato:false,metodo:null},
-    {id:3,clienteId:3,data:fmtDate(addDays(today,1)),ora:"10:00",servizi:[6],note:"Balayage biondo miele",completato:false,metodo:null},
-    {id:4,clienteId:4,data:fmtDate(addDays(today,2)),ora:"15:30",servizi:[1,9],note:"",completato:false,metodo:null},
-    {id:5,clienteId:1,data:fmtDate(addDays(today,-14)),ora:"10:00",servizi:[5,3],note:"Colore castano dorato",completato:true,metodo:"carta"},
-    {id:6,clienteId:2,data:fmtDate(addDays(today,-30)),ora:"14:00",servizi:[1],note:"",completato:true,metodo:"contanti"},
-    {id:7,clienteId:3,data:fmtDate(addDays(today,-7)),ora:"09:00",servizi:[3],note:"Piega per evento",completato:true,metodo:"contanti"},
-    {id:8,clienteId:1,data:fmtDate(addDays(today,-60)),ora:"11:00",servizi:[7],note:"Prima cheratina",completato:true,metodo:"bonus"},
-  ],
-  magazzino: [
-    {id:1,emoji:"🟤",nome:"Aquarely Castano",  qty:8, costo:5.20,fornitore:"Itely",    note:"Nuance 4N, 4CL, 4CH"},
-    {id:2,emoji:"⚫",nome:"Aquarely Nero",     qty:5, costo:5.20,fornitore:"Itely",    note:"Nuance 1N"},
-    {id:3,emoji:"🟡",nome:"Aquarely Biondo",   qty:6, costo:5.20,fornitore:"Itely",    note:"Nuance 8N, 9N, 10N"},
-    {id:4,emoji:"🔴",nome:"Aquarely Rosso",    qty:4, costo:5.20,fornitore:"Itely",    note:"Nuance 6RF, 7RF"},
-    {id:5,emoji:"💧",nome:"Acqua Ossigenata", qty:12,costo:2.80,fornitore:"Fanola",   note:"Vol. 10, 20, 30, 40"},
-    {id:6,emoji:"🧴",nome:"Shampoo Prof.",    qty:3, costo:12.00,fornitore:"Kerastase",note:"Uso quotidiano"},
-    {id:7,emoji:"🫙",nome:"Maschera",         qty:2, costo:18.00,fornitore:"Schwarzkopf",note:"Trattamento intensivo"},
-  ],
+  clienti: [],
+  appuntamenti: [],
+  magazzino: [],
   selectedDate: fmtDate(today),
   currentPage: "oggi",
   selectedPayAppt: null,
@@ -426,7 +408,13 @@ window.selectDate=function(d){
 
 // ===== APPT LIST =====
 function renderApptList(){
-  const appts=state.appuntamenti.filter(a=>a.data===state.selectedDate).sort((a,b)=>a.ora.localeCompare(b.ora));
+  const calQ=(document.getElementById("calSearch")?.value||"").toLowerCase();
+  const appts=state.appuntamenti.filter(a=>{
+    if(a.data!==state.selectedDate) return false;
+    if(!calQ) return true;
+    const cl=getClient(a.clienteId);
+    return cl && (cl.nome+" "+cl.cognome+" "+(cl.soprannome||"")).toLowerCase().includes(calQ);
+  }).sort((a,b)=>a.ora.localeCompare(b.ora));
   const el=document.getElementById("apptList");
   const label=state.selectedDate===fmtDate(today)?"Oggi":fmtDateIT(state.selectedDate);
   const incasso=state.appuntamenti.filter(a=>a.data===state.selectedDate&&a.completato).reduce((t,a)=>t+a.servizi.reduce((s,sid)=>s+(getSvc(sid)?.price||0),0),0);
@@ -717,7 +705,9 @@ window.openClientDetail=function(id){
     </div>
     <div style="display:flex;gap:8px;margin-bottom:14px">
       <button class="btn primary full" onclick="openNewApptSheet(${cl.id})">+ Appuntamento</button>
+      ${cl.telefono?`<a class="btn sm" href="https://wa.me/39${cl.telefono.replace(/\s/g,'')}" target="_blank" style="flex-shrink:0;background:#25D366;color:#fff;border:none;text-decoration:none;display:flex;align-items:center">💬</a>`:''}
       <button class="btn secondary sm" onclick="openEditClientSheet(${cl.id})" style="flex-shrink:0">✏️</button>
+      <button class="btn sm" onclick="deleteClient(${cl.id})" style="flex-shrink:0;background:var(--danger);color:#fff;border:none">🗑️</button>
     </div>
     <div class="stat-pills">
       <div class="stat-pill"><div class="sp-icon">📊</div><div class="sp-val">${passati.length}</div><div class="sp-lbl">Visite</div></div>
@@ -762,6 +752,22 @@ window.openClientDetail=function(id){
     </div>`:""}
   `;
 };
+window.deleteClient=async function(id){
+  const cl=getClient(id);
+  if(!cl) return;
+  if(!confirm(`Eliminare "${cl.nome} ${cl.cognome}" e tutti i suoi appuntamenti?`)) return;
+  if(apiBase){
+    await apiDelete("/clienti/"+id);
+    await syncFromServer();
+  } else {
+    state.clienti=state.clienti.filter(c=>c.id!==id);
+    state.appuntamenti=state.appuntamenti.filter(a=>a.clienteId!==id);
+    saveState();
+  }
+  closeClientDetail();
+  renderClientiList();
+  toast("🗑️ Cliente eliminato");
+};
 window.closeClientDetail=function(){
   document.getElementById("clientiListView").style.display="block";
   document.getElementById("clientDetailView").classList.remove("active");
@@ -771,6 +777,10 @@ window.closeClientDetail=function(){
 // ===== MAGAZZINO =====
 function renderMagazzino(){
   const mag = state.magazzino;
+  // Update bottom nav badge
+  const lowCount=mag.filter(p=>p.qty<=2).length;
+  const magBdg=document.getElementById("magBadge");
+  if(magBdg){ magBdg.style.display=lowCount>0?"block":"none"; magBdg.textContent=lowCount; }
   const totVal = mag.reduce((t,p)=>t+(p.qty*p.costo),0);
   const totQty = mag.reduce((t,p)=>t+p.qty,0);
   const lowItems = mag.filter(p=>p.qty<=2);
@@ -961,6 +971,7 @@ function renderStat(){
   const topSvc=Object.values(svcMese).sort((a,b)=>b.cnt-a.cnt).slice(0,5);
 
   document.getElementById("statContent").innerHTML=`
+    <button class="btn full" onclick="exportData()" style="margin-bottom:16px;background:var(--card);border:1.5px solid var(--border)">📥 Scarica Backup Dati</button>
     <div class="stat-pills">
       <div class="stat-pill"><div class="sp-icon">💰</div><div class="sp-val">€${incOggi}</div><div class="sp-lbl">Oggi</div></div>
       <div class="stat-pill"><div class="sp-icon">📆</div><div class="sp-val">€${incMese}</div><div class="sp-lbl">Questo mese</div></div>
@@ -998,6 +1009,24 @@ function bindSheetEvents(){
   const ms=document.getElementById("mobileSearch");
   if(ms){ ms.removeEventListener("input",()=>{}); ms.addEventListener("input",e=>{ mobileSearch=e.target.value; renderClientiList(); }); }
 }
+
+// ===== EXPORT =====
+window.exportData=function(){
+  const data = {
+    esportato: new Date().toISOString(),
+    clienti: state.clienti,
+    appuntamenti: state.appuntamenti,
+    magazzino: state.magazzino
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], {type:"application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "sei_unica_backup_" + fmtDate(today) + ".json";
+  a.click();
+  URL.revokeObjectURL(url);
+  toast("📥 Backup scaricato!");
+};
 
 // ===== INIT =====
 renderDateStrip();
